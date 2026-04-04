@@ -1,18 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-
-const STORAGE_KEY = "finance-tracker-data";
-
-function loadSaved(key, fallback) {
-  try {
-    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (data && data[key] !== undefined) return data[key];
-  } catch {}
-  return fallback;
-}
-
-function saveAll(data) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
-}
+import { useState, useMemo, useEffect, useRef } from "react";
+import { saveData, onDataChange } from "./firebase";
 
 const WEEKS_PER_YEAR = 52;
 const FREQ_OPTIONS = ["Weekly", "Fortnightly", "Monthly", "Per Term", "Yearly"];
@@ -122,17 +109,32 @@ function ScenarioCard({ income, expenses, color, label }) {
 }
 
 export default function FinanceDashboard() {
-  const [expenses, setExpenses] = useState(() => loadSaved("expenses", DEFAULT_EXPENSES));
-  const [incomes, setIncomes] = useState(() => loadSaved("incomes", DEFAULT_INCOME));
-  const [savingsGoals, setSavingsGoals] = useState(() => loadSaved("savingsGoals", [
+  const [expenses, setExpenses] = useState(DEFAULT_EXPENSES);
+  const [incomes, setIncomes] = useState(DEFAULT_INCOME);
+  const [savingsGoals, setSavingsGoals] = useState([
     { id: 1, name: "Emergency Fund", target: 1000, saved: 0 },
-  ]));
+  ]);
   const [view, setView] = useState("Weekly");
   const [activeTab, setActiveTab] = useState("snapshot");
-  const [nextId, setNextId] = useState(() => loadSaved("nextId", 100));
+  const [nextId, setNextId] = useState(100);
+  const isRemoteUpdate = useRef(false);
 
+  // Listen for changes from Firebase (your wife's device or yours)
   useEffect(() => {
-    saveAll({ expenses, incomes, savingsGoals, nextId });
+    return onDataChange((data) => {
+      isRemoteUpdate.current = true;
+      if (data.expenses) setExpenses(data.expenses);
+      if (data.incomes) setIncomes(data.incomes);
+      if (data.savingsGoals) setSavingsGoals(data.savingsGoals);
+      if (data.nextId) setNextId(data.nextId);
+      setTimeout(() => { isRemoteUpdate.current = false; }, 0);
+    });
+  }, []);
+
+  // Save to Firebase when data changes locally
+  useEffect(() => {
+    if (isRemoteUpdate.current) return;
+    saveData({ expenses, incomes, savingsGoals, nextId });
   }, [expenses, incomes, savingsGoals, nextId]);
   const [editingExpense, setEditingExpense] = useState(null);
 
