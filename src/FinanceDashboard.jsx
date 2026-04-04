@@ -1,4 +1,18 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+
+const STORAGE_KEY = "finance-tracker-data";
+
+function loadSaved(key, fallback) {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (data && data[key] !== undefined) return data[key];
+  } catch {}
+  return fallback;
+}
+
+function saveAll(data) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+}
 
 const WEEKS_PER_YEAR = 52;
 const FREQ_OPTIONS = ["Weekly", "Fortnightly", "Monthly", "Per Term", "Yearly"];
@@ -108,14 +122,18 @@ function ScenarioCard({ income, expenses, color, label }) {
 }
 
 export default function FinanceDashboard() {
-  const [expenses, setExpenses] = useState(DEFAULT_EXPENSES);
-  const [incomes, setIncomes] = useState(DEFAULT_INCOME);
-  const [savingsGoals, setSavingsGoals] = useState([
+  const [expenses, setExpenses] = useState(() => loadSaved("expenses", DEFAULT_EXPENSES));
+  const [incomes, setIncomes] = useState(() => loadSaved("incomes", DEFAULT_INCOME));
+  const [savingsGoals, setSavingsGoals] = useState(() => loadSaved("savingsGoals", [
     { id: 1, name: "Emergency Fund", target: 1000, saved: 0 },
-  ]);
+  ]));
   const [view, setView] = useState("Weekly");
   const [activeTab, setActiveTab] = useState("snapshot");
-  const [nextId, setNextId] = useState(100);
+  const [nextId, setNextId] = useState(() => loadSaved("nextId", 100));
+
+  useEffect(() => {
+    saveAll({ expenses, incomes, savingsGoals, nextId });
+  }, [expenses, incomes, savingsGoals, nextId]);
   const [editingExpense, setEditingExpense] = useState(null);
 
   const viewMult = { Weekly: 1, Fortnightly: 2, Monthly: 4.33, Yearly: WEEKS_PER_YEAR };
