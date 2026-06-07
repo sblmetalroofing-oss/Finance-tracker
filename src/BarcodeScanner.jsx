@@ -24,8 +24,10 @@ export default function BarcodeScanner({ priceBook, onConfirm, onClose }) {
     try {
       const reader = readerRef.current || new BrowserMultiFormatReader();
       readerRef.current = reader;
-      controlsRef.current = await reader.decodeFromVideoDevice(
-        undefined,
+      // Prefer the rear/environment camera for scanning (phones default to the
+      // front camera otherwise). "ideal" keeps a graceful fallback on laptops.
+      controlsRef.current = await reader.decodeFromConstraints(
+        { video: { facingMode: { ideal: "environment" } } },
         videoRef.current,
         (result, err, controls) => {
           if (result) {
