@@ -420,7 +420,7 @@ export default function FinanceDashboard() {
                     {g.checked && <span style={{ color: "#fff", fontSize: 13 }}>{"✓"}</span>}
                   </div>
                   <input value={g.name} onChange={(e) => updateGrocery(g.id, "name", e.target.value)}
-                    style={{ ...inp, padding: "8px 10px", textDecoration: g.checked ? "line-through" : "none" }} placeholder="Item name" />
+                    style={{ ...inp, flex: 1, minWidth: 0, padding: "8px 10px", textDecoration: g.checked ? "line-through" : "none" }} placeholder="Item name" />
                   <button onClick={() => removeGrocery(g.id)} style={{ background: "#1a1a2e", border: "none", color: "#E8675A", borderRadius: 8, padding: "8px 11px", cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingLeft: 32 }}>
@@ -429,10 +429,10 @@ export default function FinanceDashboard() {
                     <span style={{ fontSize: 14, color: "#ccc", minWidth: 20, textAlign: "center", fontFamily: "'Space Mono'" }}>{g.qty}</span>
                     <button onClick={() => changeQty(g.id, 1)} style={{ background: "none", border: "none", color: "#999", padding: "6px 12px", fontSize: 16, cursor: "pointer" }}>+</button>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
                     <span style={{ color: "#555", fontSize: 14 }}>$</span>
                     <input type="number" inputMode="decimal" value={g.price ?? ""} onChange={(e) => updateGrocery(g.id, "price", e.target.value === "" ? null : parseFloat(e.target.value) || 0)}
-                      style={{ ...inp, padding: "6px 10px", textAlign: "right" }} placeholder="0.00" />
+                      style={{ ...inp, width: "100%", minWidth: 0, padding: "6px 10px", textAlign: "right" }} placeholder="0.00" />
                   </div>
                   <span style={{ fontFamily: "'Space Mono'", fontSize: 13, color: "#ccc", minWidth: 60, textAlign: "right", flexShrink: 0 }}>{fmt((g.price || 0) * g.qty)}</span>
                 </div>
