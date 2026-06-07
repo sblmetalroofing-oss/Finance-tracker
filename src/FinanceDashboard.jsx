@@ -1,7 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import BarcodeScanner from "./BarcodeScanner";
-
-const STORAGE_KEY = "finance-tracker-data";
+import { saveData, onDataChange } from "./firebase";
 
 // Suggested starter shopping list seeded from the user's fridge/pantry photos
 // (things that looked low or absent). All editable.
@@ -19,18 +18,6 @@ const DEFAULT_GROCERIES = [
   { id: 1011, name: "Snacks (lunchbox)", barcode: null, qty: 1, checked: false, price: null },
   { id: 1012, name: "Butter / spread", barcode: null, qty: 1, checked: false, price: null },
 ];
-
-function loadSaved(key, fallback) {
-  try {
-    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (data && data[key] !== undefined) return data[key];
-  } catch {}
-  return fallback;
-}
-
-function saveAll(data) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
-}
 
 const WEEKS_PER_YEAR = 52;
 const FREQ_OPTIONS = ["Weekly", "Fortnightly", "Monthly", "Per Term", "Yearly"];
@@ -140,23 +127,41 @@ function ScenarioCard({ income, expenses, color, label }) {
 }
 
 export default function FinanceDashboard() {
-  const [expenses, setExpenses] = useState(() => loadSaved("expenses", DEFAULT_EXPENSES));
-  const [incomes, setIncomes] = useState(() => loadSaved("incomes", DEFAULT_INCOME));
-  const [savingsGoals, setSavingsGoals] = useState(() => loadSaved("savingsGoals", [
+  const [expenses, setExpenses] = useState(DEFAULT_EXPENSES);
+  const [incomes, setIncomes] = useState(DEFAULT_INCOME);
+  const [savingsGoals, setSavingsGoals] = useState([
     { id: 1, name: "Emergency Fund", target: 1000, saved: 0 },
-  ]));
+  ]);
   const [view, setView] = useState("Weekly");
   const [activeTab, setActiveTab] = useState("snapshot");
-  const [nextId, setNextId] = useState(() => loadSaved("nextId", 2000));
+  const [nextId, setNextId] = useState(2000);
+  const isRemoteUpdate = useRef(false);
 
-  const [groceryItems, setGroceryItems] = useState(() => loadSaved("groceryItems", DEFAULT_GROCERIES));
-  const [priceBook, setPriceBook] = useState(() => loadSaved("priceBook", {}));
-  const [shoppingTrips, setShoppingTrips] = useState(() => loadSaved("shoppingTrips", []));
+  const [groceryItems, setGroceryItems] = useState(DEFAULT_GROCERIES);
+  const [priceBook, setPriceBook] = useState({});
+  const [shoppingTrips, setShoppingTrips] = useState([]);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [newGrocery, setNewGrocery] = useState("");
 
+  // Listen for changes from Firebase (your wife's device or yours)
   useEffect(() => {
-    saveAll({ expenses, incomes, savingsGoals, nextId, groceryItems, priceBook, shoppingTrips });
+    return onDataChange((data) => {
+      isRemoteUpdate.current = true;
+      if (data.expenses) setExpenses(data.expenses);
+      if (data.incomes) setIncomes(data.incomes);
+      if (data.savingsGoals) setSavingsGoals(data.savingsGoals);
+      if (data.nextId) setNextId(data.nextId);
+      if (data.groceryItems) setGroceryItems(data.groceryItems);
+      if (data.priceBook) setPriceBook(data.priceBook);
+      if (data.shoppingTrips) setShoppingTrips(data.shoppingTrips);
+      setTimeout(() => { isRemoteUpdate.current = false; }, 0);
+    });
+  }, []);
+
+  // Save to Firebase when data changes locally
+  useEffect(() => {
+    if (isRemoteUpdate.current) return;
+    saveData({ expenses, incomes, savingsGoals, nextId, groceryItems, priceBook, shoppingTrips });
   }, [expenses, incomes, savingsGoals, nextId, groceryItems, priceBook, shoppingTrips]);
   const [editingExpense, setEditingExpense] = useState(null);
 
