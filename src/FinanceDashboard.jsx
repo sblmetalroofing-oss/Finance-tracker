@@ -1,5 +1,23 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import BarcodeScanner from "./BarcodeScanner";
 import { saveData, onDataChange } from "./firebase";
+
+// Suggested starter shopping list seeded from the user's fridge/pantry photos
+// (things that looked low or absent). All editable.
+const DEFAULT_GROCERIES = [
+  { id: 1001, name: "Eggs (dozen)", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1002, name: "Bread", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1003, name: "Milk", barcode: null, qty: 2, checked: false, price: null },
+  { id: 1004, name: "Bananas", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1005, name: "Apples", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1006, name: "Berries", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1007, name: "Lettuce / salad mix", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1008, name: "Baby spinach", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1009, name: "Brown onions", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1010, name: "Tomatoes", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1011, name: "Snacks (lunchbox)", barcode: null, qty: 1, checked: false, price: null },
+  { id: 1012, name: "Butter / spread", barcode: null, qty: 1, checked: false, price: null },
+];
 
 const WEEKS_PER_YEAR = 52;
 const FREQ_OPTIONS = ["Weekly", "Fortnightly", "Monthly", "Per Term", "Yearly"];
@@ -116,8 +134,14 @@ export default function FinanceDashboard() {
   ]);
   const [view, setView] = useState("Weekly");
   const [activeTab, setActiveTab] = useState("snapshot");
-  const [nextId, setNextId] = useState(100);
+  const [nextId, setNextId] = useState(2000);
   const isRemoteUpdate = useRef(false);
+
+  const [groceryItems, setGroceryItems] = useState(DEFAULT_GROCERIES);
+  const [priceBook, setPriceBook] = useState({});
+  const [shoppingTrips, setShoppingTrips] = useState([]);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [newGrocery, setNewGrocery] = useState("");
 
   // Listen for changes from Firebase (your wife's device or yours)
   useEffect(() => {
@@ -127,6 +151,9 @@ export default function FinanceDashboard() {
       if (data.incomes) setIncomes(data.incomes);
       if (data.savingsGoals) setSavingsGoals(data.savingsGoals);
       if (data.nextId) setNextId(data.nextId);
+      if (data.groceryItems) setGroceryItems(data.groceryItems);
+      if (data.priceBook) setPriceBook(data.priceBook);
+      if (data.shoppingTrips) setShoppingTrips(data.shoppingTrips);
       setTimeout(() => { isRemoteUpdate.current = false; }, 0);
     });
   }, []);
@@ -134,8 +161,8 @@ export default function FinanceDashboard() {
   // Save to Firebase when data changes locally
   useEffect(() => {
     if (isRemoteUpdate.current) return;
-    saveData({ expenses, incomes, savingsGoals, nextId });
-  }, [expenses, incomes, savingsGoals, nextId]);
+    saveData({ expenses, incomes, savingsGoals, nextId, groceryItems, priceBook, shoppingTrips });
+  }, [expenses, incomes, savingsGoals, nextId, groceryItems, priceBook, shoppingTrips]);
   const [editingExpense, setEditingExpense] = useState(null);
 
   const viewMult = { Weekly: 1, Fortnightly: 2, Monthly: 4.33, Yearly: WEEKS_PER_YEAR };
@@ -167,6 +194,70 @@ export default function FinanceDashboard() {
   const removeGoal = (id) => setSavingsGoals(savingsGoals.filter(g => g.id !== id));
   const weeksToGoal = (g) => { if (surplus <= 0) return Infinity; const r = g.target - g.saved; return r <= 0 ? 0 : Math.ceil(r / surplus); };
 
+  // ===== Groceries =====
+  const addGrocery = (name) => {
+    const n = (name ?? newGrocery).trim();
+    if (!n) return;
+    setGroceryItems([...groceryItems, { id: getId(), name: n, barcode: null, qty: 1, checked: false, price: null }]);
+    setNewGrocery("");
+  };
+  const updateGrocery = (id, f, v) => setGroceryItems(groceryItems.map(g => g.id === id ? { ...g, [f]: v } : g));
+  const removeGrocery = (id) => setGroceryItems(groceryItems.filter(g => g.id !== id));
+  const changeQty = (id, d) => setGroceryItems(groceryItems.map(g => g.id === id ? { ...g, qty: Math.max(1, g.qty + d) } : g));
+
+  // Called from the scanner: merge by barcode (or add new), prefill price + check it.
+  const handleScanned = ({ barcode, name, price }) => {
+    setGroceryItems(prev => {
+      const existing = prev.find(g => g.barcode === barcode);
+      if (existing) {
+        return prev.map(g => g.id === existing.id ? { ...g, name, price, checked: true } : g);
+      }
+      return [...prev, { id: getId(), name, barcode, qty: 1, checked: true, price }];
+    });
+    setPriceBook(prev => {
+      const prior = prev[barcode];
+      return {
+        ...prev,
+        [barcode]: {
+          name,
+          lastPrice: price,
+          history: [...(prior?.history || []), { date: new Date().toISOString().slice(0, 10), price }].slice(-12),
+        },
+      };
+    });
+  };
+
+  const checkedGroceries = useMemo(() => groceryItems.filter(g => g.checked), [groceryItems]);
+  const tripTotal = useMemo(() => checkedGroceries.reduce((s, g) => s + (g.price || 0) * g.qty, 0), [checkedGroceries]);
+
+  const finishTrip = () => {
+    if (checkedGroceries.length === 0) return;
+    const total = tripTotal;
+    let id = nextId;
+    const tripId = id++;
+    const expenseId = id++;
+    setNextId(id);
+    const trip = {
+      id: tripId,
+      date: new Date().toISOString().slice(0, 10),
+      store: "Aldi",
+      items: checkedGroceries.map(g => ({ name: g.name, barcode: g.barcode, price: g.price || 0, qty: g.qty })),
+      total,
+    };
+    setShoppingTrips([trip, ...shoppingTrips]);
+    // Remove the purchased items from the active list.
+    setGroceryItems(groceryItems.filter(g => !g.checked));
+    // Auto-sync into the Food budget via a single managed weekly line.
+    setExpenses(prev => {
+      const idx = prev.findIndex(e => e.name === "Groceries (scanned)" && e.category === "Food");
+      if (idx >= 0) {
+        return prev.map((e, i) => i === idx ? { ...e, amount: total, enabled: true } : e);
+      }
+      return [...prev, { id: expenseId, name: "Groceries (scanned)", amount: total, freq: "Weekly", category: "Food", enabled: true }];
+    });
+    setActiveTab("groceries");
+  };
+
   const afterpayWeekly = useMemo(() => {
     const ap = expenses.find(e => e.name === "Afterpay" && e.enabled);
     return ap ? toWeekly(ap.amount, ap.freq) : 0;
@@ -181,7 +272,7 @@ export default function FinanceDashboard() {
   const delBtnS = { background: "#1a1a2e", border: "none", color: "#E8675A", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans'", width: "100%", marginTop: 8 };
   const tipCard = { padding: "10px 12px", background: "#12122a", borderRadius: 10, marginBottom: 8, fontSize: 13 };
 
-  const TABS = [["snapshot", "Snapshot"], ["plan", "Budget Plan"], ["expenses", "Expenses"], ["income", "Income"], ["goals", "Goals"], ["whatif", "What If"]];
+  const TABS = [["snapshot", "Snapshot"], ["groceries", "Groceries"], ["plan", "Budget Plan"], ["expenses", "Expenses"], ["income", "Income"], ["goals", "Goals"], ["whatif", "What If"]];
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a1a", color: "#e0e0e0", fontFamily: "'DM Sans', sans-serif", padding: "16px 12px", WebkitTextSizeAdjust: "100%", overflowX: "hidden", boxSizing: "border-box", width: "100%", maxWidth: "100vw" }}>
@@ -290,6 +381,97 @@ export default function FinanceDashboard() {
             <ScenarioCard income={1200} expenses={totalExpW} color="#2A9D8F" label="Scenario B" />
             <ScenarioCard income={1500} expenses={totalExpW} color="#669BBC" label="Scenario C" />
           </div>
+        </div>
+      )}
+
+      {/* ===== GROCERIES ===== */}
+      {activeTab === "groceries" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ fontSize: 14, color: "#888", margin: 0, fontWeight: 500 }}>Shopping List</h3>
+              <span style={{ fontSize: 12, color: "#666" }}>{checkedGroceries.length}/{groceryItems.length} in cart</span>
+            </div>
+
+            <button onClick={() => setScannerOpen(true)} style={{ width: "100%", background: "#2A9D8F", border: "none", color: "#04201c", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans'", marginBottom: 10 }}>
+              📷 Scan barcode
+            </button>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <input value={newGrocery} onChange={(e) => setNewGrocery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addGrocery(); }}
+                style={inp} placeholder="Add an item…" />
+              <button onClick={() => addGrocery()} style={{ ...addBtnS, flexShrink: 0 }}>+ Add</button>
+            </div>
+
+            {groceryItems.length === 0 && (
+              <div style={{ fontSize: 13, color: "#555", textAlign: "center", padding: "16px 0" }}>List is empty. Scan or add items above.</div>
+            )}
+
+            {groceryItems.map(g => (
+              <div key={g.id} style={{ padding: "10px 0", borderBottom: "1px solid #1a1a2e", opacity: g.checked ? 0.6 : 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div onClick={() => updateGrocery(g.id, "checked", !g.checked)} style={{
+                    width: 22, height: 22, borderRadius: 6, flexShrink: 0, cursor: "pointer",
+                    border: `2px solid ${g.checked ? "#2A9D8F" : "#333"}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: g.checked ? "#2A9D8F" : "transparent", transition: "all 0.2s",
+                  }}>
+                    {g.checked && <span style={{ color: "#fff", fontSize: 13 }}>{"✓"}</span>}
+                  </div>
+                  <input value={g.name} onChange={(e) => updateGrocery(g.id, "name", e.target.value)}
+                    style={{ ...inp, padding: "8px 10px", textDecoration: g.checked ? "line-through" : "none" }} placeholder="Item name" />
+                  <button onClick={() => removeGrocery(g.id)} style={{ background: "#1a1a2e", border: "none", color: "#E8675A", borderRadius: 8, padding: "8px 11px", cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingLeft: 32 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 0, background: "#12122a", borderRadius: 8, border: "1px solid #2a2a4a" }}>
+                    <button onClick={() => changeQty(g.id, -1)} style={{ background: "none", border: "none", color: "#999", padding: "6px 12px", fontSize: 16, cursor: "pointer" }}>−</button>
+                    <span style={{ fontSize: 14, color: "#ccc", minWidth: 20, textAlign: "center", fontFamily: "'Space Mono'" }}>{g.qty}</span>
+                    <button onClick={() => changeQty(g.id, 1)} style={{ background: "none", border: "none", color: "#999", padding: "6px 12px", fontSize: 16, cursor: "pointer" }}>+</button>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                    <span style={{ color: "#555", fontSize: 14 }}>$</span>
+                    <input type="number" inputMode="decimal" value={g.price ?? ""} onChange={(e) => updateGrocery(g.id, "price", e.target.value === "" ? null : parseFloat(e.target.value) || 0)}
+                      style={{ ...inp, padding: "6px 10px", textAlign: "right" }} placeholder="0.00" />
+                  </div>
+                  <span style={{ fontFamily: "'Space Mono'", fontSize: 13, color: "#ccc", minWidth: 60, textAlign: "right", flexShrink: 0 }}>{fmt((g.price || 0) * g.qty)}</span>
+                </div>
+              </div>
+            ))}
+
+            <div style={{ marginTop: 14, padding: "12px", background: "#12122a", borderRadius: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontSize: 13, color: "#888" }}>Cart total ({checkedGroceries.length} items)</span>
+                <span style={{ fontFamily: "'Space Mono'", fontSize: 18, fontWeight: 700, color: "#2A9D8F" }}>{fmt(tripTotal)}</span>
+              </div>
+              <button onClick={finishTrip} disabled={checkedGroceries.length === 0} style={{
+                width: "100%", background: checkedGroceries.length === 0 ? "#1a1a2e" : "#2A9D8F",
+                border: "none", color: checkedGroceries.length === 0 ? "#555" : "#04201c", borderRadius: 10,
+                padding: "13px", fontSize: 15, fontWeight: 700, cursor: checkedGroceries.length === 0 ? "default" : "pointer", fontFamily: "'DM Sans'",
+              }}>
+                Finish trip → add to Food budget
+              </button>
+            </div>
+
+            <p style={{ fontSize: 11, color: "#555", margin: "10px 0 0", lineHeight: 1.5 }}>
+              Finishing a trip records it below and updates a “Groceries (scanned)” line in your Food budget. To avoid double-counting, you may want to disable the default “Food” item on the Expenses tab.
+            </p>
+          </div>
+
+          {shoppingTrips.length > 0 && (
+            <div style={card}>
+              <h3 style={{ fontSize: 14, color: "#888", margin: "0 0 10px", fontWeight: 500 }}>Recent Trips</h3>
+              {shoppingTrips.slice(0, 8).map(t => (
+                <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #1a1a2e" }}>
+                  <div>
+                    <div style={{ fontSize: 14, color: "#ccc" }}>{t.store}</div>
+                    <div style={{ fontSize: 11, color: "#555" }}>{t.date} · {t.items.length} items</div>
+                  </div>
+                  <span style={{ fontFamily: "'Space Mono'", fontSize: 14, color: "#E8675A" }}>{fmt(t.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -574,6 +756,14 @@ export default function FinanceDashboard() {
       )}
 
       <div style={{ height: 40 }} />
+
+      {scannerOpen && (
+        <BarcodeScanner
+          priceBook={priceBook}
+          onConfirm={handleScanned}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
     </div>
   );
 }
